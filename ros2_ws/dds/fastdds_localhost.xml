@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fast-DDS localhost UNICAST discovery profile.
+
+  Why this file exists:
+    This container's loopback interface `lo` is NOT multicast-capable
+    (/sys/class/net/lo/flags = 0x9 = UP|LOOPBACK, no MULTICAST bit). DDS default
+    discovery relies on multicast, so with ROS_LOCALHOST_ONLY=1 discovery silently
+    breaks and no two nodes ever find each other. This profile makes Fast-DDS use
+    plain UNICAST to 127.0.0.1 for discovery instead, which works without multicast.
+
+  How to use (every ROS2 process: nodes, agent, CLI):
+    export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    export FASTRTPS_DEFAULT_PROFILES_FILE=/root/ros2_ws/dds/fastdds_localhost.xml
+    # do NOT set ROS_LOCALHOST_ONLY here; the unicast peer already pins to 127.0.0.1
+    ros2 daemon stop   # the CLI daemon caches a stale env; restart it after changing RMW
+
+  Verified 2026-06-18: ESP32 node /esp32_first_light and topic /esp32/test_twist
+  became visible and data flowed once both the agent and the CLI used this profile.
+
+  2026-09-08: maxInitialPeersRange added (custom UDPv4 transport below).
+    A port-less initial peer such as "127.0.0.1" is expanded by Fast-DDS into the
+    well-known metatraffic ports of participant IDs 0 .. maxInitialPeersRange-1,
+    and the DEFAULT range is only 4. So the 5th and later DDS participants on this
+    host (each ROS2 node, the CLI daemon and the micro-ROS agent's two participants
+    all count) were never announced to and could not discover each other unless
+    one of the pair happened to be among the first four. Symptom seen with the
+    teleop launch (4 nodes) running: `ros2 topic info` still listed /esp32_base's
+    publishers, the agent at -v6 wrote /wheel_ticks into DDS at 50 Hz, yet a new
+    subscriber received nothing. With 64 the range covers any realistic number of
+    processes on this machine.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>udpv4_wide_peer_range</transport_id>
+        <type>UDPv4</type>
+        <!-- How many participant IDs a port-less initial peer expands to. -->
+        <maxInitialPeersRange>64</maxInitialPeersRange>
+      </transport_descriptor>
+      <!-- Keep shared memory for same-host traffic, as the builtin set had. -->
+      <transport_descriptor>
+        <transport_id>shm_local</transport_id>
+        <type>SHM</type>
+      </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="loopback_unicast" is_default_profile="true">
+      <rtps>
+        <!-- The builtin transports cannot have their peer range changed, so the
+             participant is switched to the two descriptors above instead. -->
+        <userTransports>
+          <transport_id>udpv4_wide_peer_range</transport_id>
+          <transport_id>shm_local</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+        <builtin>
+          <metatrafficUnicastLocatorList>
+            <locator>
+              <udpv4><address>127.0.0.1</address></udpv4>
+            </locator>
+          </metatrafficUnicastLocatorList>
+          <initialPeersList>
+            <locator>
+              <udpv4><address>127.0.0.1</address></udpv4>
+            </locator>
+          </initialPeersList>
+        </builtin>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

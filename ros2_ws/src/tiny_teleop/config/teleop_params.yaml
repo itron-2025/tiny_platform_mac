@@ -1,0 +1,105 @@
+# Parameters for launch/teleop.launch.py.
+#
+# ROS1 analogy: this is what you would have put on the parameter server with
+# <rosparam>. In ROS2 every node owns its own parameters, so the file is keyed
+# by the node's FULL name -- including the /tiny namespace the launch file puts
+# it in. Drop the namespace from these keys and the parameters silently do not
+# load, which looks exactly like "my settings are being ignored".
+#
+# --------------------------------------------------------------------------
+#  Nintendo Switch Pro Controller layout, SDL2 HIDAPI backend:
+#
+#     axes[0]  left stick  X   +1 = LEFT      axes[3]  right stick Y  +1 = UP
+#     axes[1]  left stick  Y   +1 = UP        axes[4]  ZL  (-1 = pressed)
+#     axes[2]  right stick X   +1 = LEFT      axes[5]  ZR  (-1 = pressed)
+#
+#     buttons[0] A        [4] -  (minus)   [8]  R stick click  [12] D-pad down
+#     buttons[1] B        [5] Home         [9]  L              [13] D-pad left
+#     buttons[2] X        [6] +  (plus)    [10] R              [14] D-pad right
+#     buttons[3] Y        [7] L stick click[11] D-pad up       [15] Capture
+#
+#  joy's sign convention (stick up / left = +1) matches REP-103 (+x forward,
+#  +y left, +z counter-clockwise), so none of the scales below is negative.
+#
+#  ⚠️ VERIFY, DO NOT TRUST: if SDL falls back to its evdev backend the counts
+#  and indices differ. `ros2 run tiny_teleop joy_probe` prints the real ones.
+# --------------------------------------------------------------------------
+
+/tiny/joy_node:
+  ros__parameters:
+    # SDL device NAME, not a /dev path -- `joy` has no device_path parameter.
+    # SDL calls this controller "Nintendo Switch Pro Controller"; the evdev name
+    # is just "Pro Controller" and filling that in here finds nothing.
+    device_name: "Nintendo Switch Pro Controller"
+    deadzone: 0.10
+    # Re-send the last state even when nothing changed. REQUIRED: joy_teleop
+    # treats silence on /tiny/joy as "controller lost" and stops.
+    autorepeat_rate: 20.0
+    coalesce_interval_ms: 20
+
+/tiny/joy_teleop:
+  ros__parameters:
+    # --- which index does what (see the table above) ---
+    axis_linear_x: 1        # left stick up/down     -> forward / backward
+    axis_linear_y: 0        # left stick left/right  -> strafe
+    axis_angular_z: 2       # right stick left/right -> rotate
+    # -1 = DIRECT mode: the sticks drive with nothing held. Set on the user's
+    # request 2026-09-08. Put an index back here (L is 9) to restore the deadman.
+    #
+    # What DIRECT mode gives up, so it is a decision and not a surprise: a
+    # dropped controller, a stuck stick, or simply walking away no longer stops
+    # the robot. What still stops it: joy_timeout below (controller goes quiet),
+    # the firmware's own 500 ms cmd_vel watchdog, Ctrl-C, and the power switch.
+    # joy_node's `deadzone` above is now the only thing keeping stick drift from
+    # creeping the robot along -- do not set it to 0.
+    #
+    # The node additionally refuses to drive until it has seen the sticks
+    # centred once (see center_epsilon), so starting it with a stick deflected
+    # cannot lurch the robot.
+    enable_button: -1
+    center_epsilon: 0.15    # |axis| under this counts as centred, for arming
+    turbo_button: 10        # R alone now (there is no deadman to combine with)
+
+    # --- full-stick command, normal / turbo ---
+    # The firmware ceiling is MAX_WHEEL_RAD_S (45.0) x 0.040 m = 1.8 m/s; above
+    # that the ESP32 scales the command down and the top of the stick goes dead.
+    # The hardware itself would do ~4 m/s.
+    #
+    # The lower bound matters too, and is less obvious: below about 0.15 m/s the
+    # wheels are in their stiction band and the open-loop feedforward is only
+    # good to ~25%, so the robot yaws slightly on a gentle start. That is a
+    # known open-loop limit, not a calibration fault -- the closed-loop firmware
+    # is what fixes it.
+    # RAISED 2026-09-08: at 0.25 m/s the robot would not move on the floor at
+    # all. The open-loop duty map was fitted with the wheels in the air, so it
+    # under-drives once the machine has to carry itself -- 0.25 m/s worked out
+    # to roughly 8% duty. See MAX_WHEEL_RAD_S in firmware/tiny_open/config.h.
+    scale_linear_x: 0.60          # [m/s]   ~17% duty
+    # NEGATIVE ON PURPOSE, and measured rather than assumed. Driving +vy straight
+    # onto /tiny/cmd_vel (bypassing the gamepad entirely) moved the robot LEFT,
+    # which is what REP-103 says +y means -- so the kinematics and the roller
+    # layout are right, and it is this controller's stick axis that runs the
+    # other way. Inverting the SCALE keeps +vy meaning "left" everywhere in ROS.
+    #
+    # Fixing it the other way -- flipping the sign inside the firmware's inverse
+    # kinematics -- would have made the stick feel correct while quietly
+    # redefining +y as "right" for every future consumer: odometry would
+    # integrate sideways motion backwards and any navigation stack would steer
+    # the wrong way. The stick is the thing that is wrong, so the stick is what
+    # gets corrected.
+    scale_linear_y: -0.60         # [m/s]   strafing costs more than driving:
+                                  #         mecanum rollers scrub sideways
+    scale_angular_z: 2.0          # [rad/s]
+    scale_linear_x_turbo: 1.20    # [m/s]   ~31% duty, about 4.3 km/h
+    scale_linear_y_turbo: -1.20   # [m/s]  (same inversion as above)
+    scale_angular_z_turbo: 4.0    # [rad/s]
+
+    # --- timing / safety ---
+    publish_rate: 20.0      # [Hz] re-publish while driving (firmware watchdog is 500 ms)
+    joy_timeout: 1.0        # [s]  no /tiny/joy for this long while driving -> stop
+    stop_burst: 3           # zero Twists sent when the node exits
+    # Stop publishing entirely after this many seconds of a centred stick, so
+    # this node does not fight the calibration tools for cmd_vel. Interleaved
+    # zeros reset the firmware's PID integrator and make the closed loop look
+    # broken (54% tracking error vs 3% without the conflict). 0 = never go quiet.
+    idle_quiet_after: 1.0

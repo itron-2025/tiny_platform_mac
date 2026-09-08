@@ -1,0 +1,31 @@
+# Stable /dev symlink for the teleop gamepad.
+#
+# Installed on the HOST only, by scripts/install-udev-host.sh (make install-udev).
+# NEVER run udevadm inside the container -- see CLAUDE.md.
+#
+# WHY: the Pro Controller is Bluetooth, so every reconnect can land on a
+# different /dev/input/eventN (observed as event10, but nothing pins it there).
+#
+# Driven by the in-kernel hid-nintendo driver (no joycond or any other userspace
+# daemon needed). Pairing itself is a HOST job (bluetoothctl); this rule only
+# names the input node that appears once the controller connects.
+#
+# Matching on ATTRS{name} rather than the USB-style vendor:product, because over
+# Bluetooth the HID ids sit on a parent node (0005:057E:2009) that is awkward to
+# match, while the name is exact and readable.
+#
+# The controller exposes TWO input devices with different names:
+#   "Pro Controller"        -> buttons + sticks   <- this is the one we want
+#   "Pro Controller (IMU)"  -> gyro/accelerometer <- deliberately NOT matched
+# The == below is an exact string compare, so the IMU node never matches.
+#
+# KERNEL=="event*" keeps the symlink off the legacy js* node. There is no js*
+# node on this host anyway (joydev does not bind to hid-nintendo here), which is
+# also why the ROS2 side must use the SDL2-based `joy` package and not the older
+# `joy_linux`, which reads /dev/input/jsX.
+#
+# NOTE ON WHAT THIS SYMLINK IS ACTUALLY FOR: `joy` has NO device_path parameter
+# (only device_name / device_id), so joy_node does not consume this path. Its
+# value is diagnostics (`evtest /dev/input/pro_controller`) and any future direct
+# evdev reader.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Pro Controller", SYMLINK+="input/pro_controller", MODE:="0666"

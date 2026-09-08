@@ -1,0 +1,21 @@
+# ROS2 colcon build artefacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Arduino / arduino-cli build output
+firmware/**/build/
+
+# Measurement data and generated plots (regenerate them, do not version them)
+runs/
+tools/out/
+
+# Editor / OS
+.vscode/
+*.swp
+.DS_Store

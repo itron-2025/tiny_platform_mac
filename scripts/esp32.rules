@@ -1,0 +1,30 @@
+# ESP32 USB-serial -> stable symlink /dev/esp32
+#
+# Confirmed 2026-09-08 on this board: it uses a CH340/CH341 USB-serial chip,
+# which enumerates as 1a86:7523 (QinHeng Electronics). Verified with:
+#   lsusb                            -> ID 1a86:7523 ... CH340 serial converter
+#   udevadm info -a -n /dev/ttyUSB0  -> ATTRS{idVendor}=="1a86" ATTRS{idProduct}=="7523"
+# The MCU behind it is an ESP32-D0WD-V3. Read your own board's MAC with
+#   esptool.py --port /dev/esp32 chip_id
+# It is the only thing that tells two identical CH340 boards apart -- see the
+# limitation below -- so it is worth writing down somewhere local.
+#
+# KNOWN LIMITATION -- READ BEFORE PLUGGING IN TWO BOARDS.
+#   This CH340 exposes NO ATTRS{serial}; the only attributes available are the
+#   generic 1a86:7523 pair and product=="USB Serial". That is the same identity
+#   as the Tomcat chassis's board and as every other cheap CH340 dev board, so
+#   udev CANNOT tell them apart. With two such boards plugged into one host,
+#   /dev/esp32 points at whichever enumerated last -- and flashing the wrong
+#   robot's firmware is a silent, confusing failure.
+#   If you ever need both at once, match the physical USB port instead by
+#   replacing the rule below with something like:
+#     SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", \
+#       KERNELS=="1-2", SYMLINK+="esp32", MODE:="0666"
+#   (find the KERNELS value with:  udevadm info -a -n /dev/ttyUSB0 | grep KERNELS)
+#   The trade-off is that the board then has to stay in that one port.
+#
+# Other common chips, for reference if the board is ever swapped:
+#   CP2102      = 10c4:ea60
+#   CH9102      = 1a86:55d4
+#   native USB  = 303a:xxxx (Espressif)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="esp32", MODE:="0666"
