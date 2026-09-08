@@ -40,6 +40,16 @@ make up        # 起容器 + agent + 遙控，照正確順序，約 40 秒
 | 左／右平移 | 左搖桿 左／右 |
 | 逆時針／順時針 | 右搖桿 左／右 |
 | Turbo（0.5 m/s） | 按住 **R** |
+| 表情：開心／生氣／疲倦／驚訝 | 按住 **A**／**B**／**X**／**Y** |
+
+表情會出現在 <http://localhost:8088>（`make up` 最後會印出網址）：一張全白的頁面、
+兩顆眼睛，開著車的時候眼睛會看向行進方向，停下來就自己眨眼、四處張望，
+90 秒沒事就睡著。全螢幕：**F11**（最保險），或頁面上按 `F`／雙擊。
+車上那塊螢幕請用 kiosk 模式開，它一啟動就是全螢幕、沒有網址列：
+
+```bash
+chromium --kiosk http://localhost:8088     # 或 google-chrome --kiosk
+```
 
 ```bash
 make watch     # 即時看按鍵 / 指令 / 輪速
@@ -62,6 +72,7 @@ make flash SKETCH=tiny_open    # 編譯 + 燒錄韌體
 make rebuild-ws                # 改過 ros2_ws/src/ 之後重建
 make shell                     # 進容器
 make logs                      # 看 teleop 的輸出
+make logs-face                 # 看表情頁面（face_node）的輸出
 ```
 
 ## 目錄

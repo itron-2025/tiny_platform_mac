@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/web', glob('web/*.html')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +25,7 @@ setup(
         'console_scripts': [
             'joy_teleop = tiny_teleop.joy_teleop:main',
             'joy_probe  = tiny_teleop.joy_probe:main',
+            'face_node  = tiny_teleop.face_node:main',
         ],
     },
 )

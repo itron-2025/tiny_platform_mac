@@ -103,3 +103,37 @@
     # zeros reset the firmware's PID integrator and make the closed loop look
     # broken (54% tracking error vs 3% without the conflict). 0 = never go quiet.
     idle_quiet_after: 1.0
+
+/tiny/face_node:
+  ros__parameters:
+    # Robot face on a web page: http://localhost:8088
+    #
+    # NOT 8080. The container runs --net=host, so this port is taken on the HOST
+    # itself, and the Tomcat project's container -- same host, also --net=host --
+    # serves its camera stream from the common ports. A clash here is silent
+    # apart from one line in the face_node log.
+    port: 8088
+    host: "0.0.0.0"       # so a tablet on the same network can show the face too
+
+    # Which button holds which mood. Indices are the Pro Controller / SDL2
+    # layout from the table at the top of this file. -1 disables a mood.
+    # These four are otherwise unused: joy_teleop drives on the sticks
+    # (enable_button: -1) and takes only R (10) for turbo.
+    button_happy: 0       # A
+    button_angry: 1       # B
+    button_tired: 2       # X
+    button_surprised: 3   # Y
+
+    # Command that makes the eyes look all the way across. Matched to the
+    # NON-turbo scales above, so a full stick is a full glance and turbo simply
+    # saturates sooner -- which is the right feel: the eyes are already as far
+    # over as they go.
+    look_scale_linear: 0.60    # [m/s]
+    look_scale_angular: 2.0    # [rad/s]
+
+    # Seconds without a cmd_vel before the eyes recentre and idle wander takes
+    # over. joy_teleop STOPS PUBLISHING once the sticks have been centred for a
+    # second (idle_quiet_after above, see CLAUDE.md 3.15), so silence on cmd_vel
+    # is the normal stopped state rather than a fault -- without this timeout the
+    # eyes would stay frozen looking wherever the robot was last heading.
+    motion_timeout: 0.5

@@ -34,8 +34,9 @@
 
 ```
 主機 (Docker / ROS2 Humble)
-  ├─ joy_node ──/joy──► tiny_teleop ──/tiny/cmd_vel──┐
-  └─ micro_ros_agent ◄────────(USB serial 115200)────┴──► ESP32
+  ├─ joy_node ──/joy──┬─► tiny_teleop ──/tiny/cmd_vel──┐
+  │                   └─► face_node ──http/SSE :8088──► 瀏覽器（機器人的臉）
+  └─ micro_ros_agent ◄─────────(USB serial 115200)─────┴──► ESP32
                                                        ├─ 逆運動學（車上算）
                                                        ├─ encoder PID → 2× TB6612 → 4 顆馬達
                                                        └─ 回報 /tiny/wheel_actual_vel、/tiny/wheel_ticks
@@ -343,10 +344,13 @@ make build             # 建映像 tiny-platform:latest（首次幾十分鐘）
 ### 日常（平常只需要這三個）
 
 ```bash
-make up                # 起容器 + agent + 遙控，照正確順序，且每層以 topic 判斷健康
+make up                # 起容器 + agent + 遙控 + 表情，照正確順序，且每層以資料流判斷健康
 make watch             # 手把即時儀表板（按鍵 / 指令 / 輪速）
 make down              # 收工
 ```
+
+`make up` 最後會印出表情頁面的網址（預設 <http://localhost:8088>）。
+A/B/X/Y = 開心／生氣／疲倦／驚訝，行駛時眼睛看向行進方向。
 
 `make up` 是冪等的：已經在跑的層會跳過，**但若某層行程在卻沒有資料流，會自動重啟那一層**
 （見 3.12、3.13）。
@@ -356,6 +360,7 @@ make down              # 收工
 ```bash
 make status            # 只檢查不動作
 make logs              # teleop 的輸出
+make logs-face         # face_node 的輸出（表情頁面起不來時看這個）
 make shell             # 進容器
 make rebuild-ws        # 改過 ros2_ws/src/ 之後（含 teleop_params.yaml）
 make flash SKETCH=tiny_open    # 停 agent → 編譯 → 燒錄
@@ -464,6 +469,10 @@ cd $TP_PROJ/ros2_ws && colcon build --symlink-install && source install/setup.zs
 - [x] **`ros2_ws/src/tiny_teleop/` 完成（2026-09-08）**：joy_node + joy_teleop + launch + params
       合成訊號實測通過（`axes[1]=0.6, buttons[9]=1` → `cmd_vel.x=0.15` → 四輪轉動）
 - [x] 韌體加入**脫困補償**（`BREAKAWAY_DUTY`，雙向實測）——低速反轉原本四輪有兩顆不會動
+- [x] **`face_node` 表情頁面（2026-09-09）**：`/tiny/joy` + `/tiny/cmd_vel` → 網頁機器人臉
+      A/B/X/Y = 開心／生氣／疲倦／驚訝；行駛時眼睛看向行進方向，待機自動眨眼與張望
+      （表情集抄 [FluxGarage/RoboEyes](https://github.com/FluxGarage/RoboEyes) 的定義，
+      程式碼沒抄——那是 Adafruit GFX 的 Arduino C++，在瀏覽器裡用兩個圓角矩形短得多）
 - [ ] 使用者實際用手把試駕（車仍架高）
 - [ ] 落地測試 + 驗證 `+vy` 真的往左（滾子方向）
 - [ ] `firmware/tiny_pid/` 閉環（收掉低速 ±25% 誤差與起步歪斜）

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command driver for the tiny_platform_mac stack. Called by the Makefile.
 #
-# The stack has three layers that must come up in a specific order, and getting
+# The stack has four layers that must come up in a specific order, and getting
 # that order wrong produces symptoms that all look identical ("nothing moves",
 # "ros2 node list is empty"). This script encodes the order so nobody has to
 # remember it:
@@ -15,6 +15,10 @@
 #      listening, then releasing it.
 #   3. teleop      -- only once telemetry is actually flowing, so a failure here
 #      cannot be confused with a failure in layer 2.
+#   4. face        -- the web face. Last because it is the only layer nothing
+#      else depends on; it is also started SEPARATELY from the teleop launch
+#      file on purpose, so that a face that will not start (stale workspace,
+#      port already taken) cannot take the driving nodes down with it.
 #
 # Usage:  scripts/tiny.sh {up|down|status|watch|shell|logs}
 
@@ -25,6 +29,7 @@ NAME=tiny-platform
 PROJ_DIR=/root/tiny_platform_mac
 DEV=${DEV:-/dev/esp32}
 BAUD=${BAUD:-115200}
+FACE_PORT=${FACE_PORT:-8088}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 R=$'\033[0m'; B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; E=$'\033[31m'
@@ -72,6 +77,23 @@ kill_matching() {
 }
 
 start_agent()  { docker exec -d "$NAME" /root/scripts/start-agent.sh "$DEV" "$BAUD"; }
+start_face()   {
+    docker exec -d "$NAME" bash -lc \
+        "cd $PROJ_DIR/ros2_ws && source /opt/ros/humble/setup.bash \
+         && source install/setup.bash \
+         && ros2 run tiny_teleop face_node --ros-args -r __ns:=/tiny \
+            --params-file \$(ros2 pkg prefix tiny_teleop)/share/tiny_teleop/config/teleop_params.yaml \
+         > /tmp/face.log 2>&1"
+}
+
+# Judged by whether the page ANSWERS, not by whether the process exists -- the
+# same rule as every other layer here, and for the same reason: face_node keeps
+# running when it cannot bind the port (deliberately, so it does not vanish out
+# of the stack), and a live PID would report that as healthy.
+face_ok() {
+    docker exec "$NAME" curl -sf -m 2 "http://127.0.0.1:$FACE_PORT/health" \
+        >/dev/null 2>&1
+}
 start_teleop() {
     docker exec -d "$NAME" bash -lc \
         "cd $PROJ_DIR/ros2_ws && source /opt/ros/humble/setup.bash \
@@ -120,7 +142,7 @@ wait_for_esp32() {   # $1 = seconds
 
 # ---------------------------------------------------------------------------
 cmd_up() {
-    echo "${B}1/3  container${R}"
+    echo "${B}1/4  container${R}"
     if container_running; then
         ok "$NAME already running"
     else
@@ -146,7 +168,7 @@ cmd_up() {
     # agent can be up but not have a session, and joy_node can be up holding a
     # device that no longer exists. Each layer is therefore judged by its TOPIC,
     # and restarted if the process is there but silent.
-    echo "${B}2/3  micro-ROS agent${R}"
+    echo "${B}2/4  micro-ROS agent${R}"
     if proc_alive 'micro_ros_agent serial' && [ -n "$(topic_hz /tiny/wheel_ticks)" ]; then
         ok "already running, telemetry flowing"
     else
@@ -166,7 +188,7 @@ cmd_up() {
         fi
     fi
 
-    echo "${B}3/3  teleop${R}"
+    echo "${B}3/4  teleop${R}"
     if proc_alive 'joy_teleop' && [ -n "$(topic_hz /tiny/joy)" ]; then
         ok "already running, gamepad live"
     else
@@ -191,6 +213,23 @@ cmd_up() {
         fi
     fi
 
+    echo "${B}4/4  face${R}"
+    if face_ok; then
+        ok "serving on http://localhost:$FACE_PORT"
+    else
+        proc_alive 'face_node' && kill_matching 'face_node'
+        start_face
+        sleep 2
+        if face_ok; then
+            ok "serving on http://localhost:$FACE_PORT"
+        else
+            warn "face not answering on :$FACE_PORT -- 'make logs-face' says why."
+            echo "        Usually one of two things: the workspace predates"
+            echo "        face_node ('make rebuild-ws'), or something else already"
+            echo "        holds the port (change it in config/teleop_params.yaml)."
+        fi
+    fi
+
     echo
     cmd_status
 }
@@ -201,6 +240,7 @@ cmd_status() {
     proc_alive 'micro_ros_agent serial' && ok "micro-ROS agent" || fail "agent not running"
     proc_alive 'joy_node'   && ok "joy_node"   || warn "joy_node not running"
     proc_alive 'joy_teleop' && ok "joy_teleop" || warn "joy_teleop not running"
+    face_ok && ok "face  http://localhost:$FACE_PORT" || warn "face not serving on :$FACE_PORT"
 
     local t j c
     t=$(topic_hz /tiny/wheel_ticks); j=$(topic_hz /tiny/joy); c=$(topic_hz /tiny/cmd_vel)
@@ -228,6 +268,7 @@ cmd_status() {
     echo
     echo "  drive it:   push the sticks (DIRECT mode, no button to hold)"
     echo "  see input:  make watch"
+    echo "  its face:   http://localhost:$FACE_PORT   (A happy / B angry / X tired / Y surprised)"
 }
 
 cmd_down()  { docker stop "$NAME" >/dev/null 2>&1 && echo "stopped" || echo "was not running"; }
@@ -235,6 +276,7 @@ cmd_watch() { docker exec -it "$NAME" bash -lc \
                 "source /opt/ros/humble/setup.bash && python3 $PROJ_DIR/tools/joy_watch.py"; }
 cmd_shell() { docker exec -it "$NAME" /bin/zsh; }
 cmd_logs()  { docker exec "$NAME" bash -c 'tail -40 /tmp/teleop.log' 2>/dev/null || echo "no log yet"; }
+cmd_logs_face() { docker exec "$NAME" bash -c 'tail -40 /tmp/face.log' 2>/dev/null || echo "no log yet"; }
 
 case "${1:-}" in
     up)     cmd_up ;;
@@ -243,5 +285,6 @@ case "${1:-}" in
     watch)  cmd_watch ;;
     shell)  cmd_shell ;;
     logs)   cmd_logs ;;
+    logs-face) cmd_logs_face ;;
     *) echo "usage: $0 {up|down|status|watch|shell|logs}"; exit 2 ;;
 esac

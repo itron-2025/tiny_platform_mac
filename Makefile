@@ -6,6 +6,7 @@ PROJ_DIR       = /root/tiny_platform_mac
 #  EVERYDAY USE -- these four are all you normally need.
 #
 #      make up       start everything, in the right order, and report
+#                    (prints the URL of the robot's face at the end)
 #      make watch    live view of gamepad -> command -> wheels
 #      make status   check each layer
 #      make down     stop
@@ -32,6 +33,11 @@ shell:
 
 logs:
 	@scripts/tiny.sh logs
+
+# The face node logs separately -- it is started outside the teleop launch so a
+# face that will not come up cannot take the driving nodes with it.
+logs-face:
+	@scripts/tiny.sh logs-face
 
 # Rebuild the ROS2 workspace inside the running container. Needed after editing
 # anything under ros2_ws/src/ -- including config/teleop_params.yaml, which is
@@ -153,4 +159,4 @@ install-udev:
 detect:
 	scripts/install-udev-host.sh --detect
 
-.PHONY: all up down status watch shell logs rebuild-ws build run attach agent compile flash stop clean install-udev detect
+.PHONY: all up down status watch shell logs logs-face rebuild-ws build run attach agent compile flash stop clean install-udev detect
