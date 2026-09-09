@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tiny_platform face</title>
+<!--
+  The face of the robot. Served by tiny_teleop's face_node, which pushes
+  {mood, look, moving} over Server-Sent Events at 20 Hz.
+
+  Division of labour: the node decides WHAT the robot feels (which button is
+  held, where it is driving), this page decides how that looks and what the
+  face does with the other 99% of its time -- blinking, glancing around, the
+  occasional micro-expression, falling asleep when nothing has happened for a
+  while. None of that idle behaviour needs robot state, so keeping it here means
+  the ROS side stays a state object instead of a frame stream, and every
+  transition between moods is a free CSS transition.
+
+  Mood set and idle behaviour follow FluxGarage/RoboEyes (MIT): default, happy,
+  tired, angry, autoblinker, idle, laugh, confused. The "it acts alive when you
+  are not touching it" part is the EMO desktop-pet idea. The drawing is two
+  rounded rectangles with eyelids painted over them in the background colour --
+  the same trick the OLED version uses, minus the framebuffer.
+
+  Fullscreen: press F, or double-click. It cannot be automatic -- browsers only
+  grant fullscreen from a real user gesture, by design. For a screen mounted on
+  the robot, where nobody is there to press anything, launch the browser in
+  kiosk mode instead:  chromium --kiosk http://localhost:8088
+
+  It also watches the pointer: move a mouse (or drag a finger on a touchscreen)
+  and the eyes follow it for a couple of seconds before going back to their own
+  business. A real command always outranks that.
+
+  Previewing without a gamepad: keys 1-9 and W (or a/b/x/y) force a mood or an
+  animation, and the arrow keys aim the eyes the way cmd_vel would. The next
+  message from the node overrides whatever the keyboard set.
+
+  Debugging note, learned the hard way: Chrome THROTTLES a background tab, and a
+  throttled tab does not advance CSS transitions. Read the eye sizes back from a
+  hidden tab and every mood looks broken -- data-mood is right, the rule matches,
+  the height never moves. Bring the tab to the front (or set transition:none)
+  before concluding anything is wrong with this file.
+-->
+<style>
+  :root{
+    --bg:#ffffff;
+    --eye:#232b36;
+    /* vmin, not px: the same page has to look right on a laptop browser and
+       on whatever screen ends up bolted to the robot. */
+    --w:30vmin; --h:38vmin; --r:9vmin; --gap:13vmin;
+  }
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg);
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden; cursor:none;
+    -webkit-user-select:none; user-select:none;
+  }
+
+  /* Three nested elements, three separate jobs, so none of them fights another
+     for the `transform` property: #face aims the eyes, #row shakes them,
+     .eye blinks. Collapsing any two of these into one element means the blink
+     cancels the glance. */
+  #face{ transition:transform .34s cubic-bezier(.34,1.3,.64,1), opacity .4s; }
+  #row { display:flex; gap:var(--gap); }
+
+  .eye{
+    position:relative;
+    width:var(--w); height:var(--h);
+    background:var(--eye); border-radius:var(--r);
+    /* `scale` and `translate` are SEPARATE CSS properties from `transform`, and
+       that is the point: the parallax (scale/translate) needs a slow, slightly
+       overshooting ease, the blink (transform) needs to be fast and linear. Put
+       both in one `transform` string and you have to pick one timing for both,
+       which is how you get a blink that looks like it is wading through mud. */
+    transition:width .25s, height .25s, border-radius .25s,
+               transform .1s ease-in,
+               scale .3s cubic-bezier(.34,1.3,.64,1),
+               translate .3s cubic-bezier(.34,1.3,.64,1);
+  }
+
+  /* NO overflow:hidden here, and that is the whole trick.
+     Clipping the eyelid to the eye's rounded rectangle makes Chrome
+     antialias the SAME curve twice -- once for the eye's dark background,
+     once for the white lid clipped on top of it. Two partial coverages
+     multiply instead of cancelling, and what is left is a grey hairline
+     tracing the entire eye. It reads as a sloppy outline.
+     Without the clip the eyelid is just a white rectangle painted over a
+     dark shape on a white page: past the eye's edge it lands on white and
+     is invisible, so there is nothing to clip and only ONE antialiased
+     edge anywhere -- the eye's own. */
+  .eye.blink{ transform:scaleY(.06); }
+
+  /* Parked directly above the eye (bottom:100%), so translateY(n%) reads as
+     "cover n% of the eye" and nothing else needs adjusting when it rotates.
+     Twice as wide as the eye so a rotated lid can never expose a corner. */
+  .lid{
+    position:absolute; bottom:100%; left:-50%; width:200%; height:100%;
+    background:var(--bg);
+    transition:transform .25s cubic-bezier(.2,.7,.3,1);
+  }
+
+  /* --- moods -------------------------------------------------------------
+     Left and right eyes tilt their lids in OPPOSITE directions; which way the
+     inner corner goes is the entire difference between angry and tired. */
+
+  /* Happy is the EYE's own shape, not an eyelid: a dome. Covering the bottom
+     of a tall eye with a curved lid (the OLED version's trick) leaves a big
+     block with a bite out of it -- on a screen this large it reads as a
+     rendering glitch rather than as a smile. */
+  #face[data-mood="happy"] .eye{
+    height:calc(var(--h) * .5);
+    border-radius:50% 50% 12% 12% / 92% 92% 12% 12%;
+  }
+
+  #face[data-mood="angry"] .eye.l .lid  { transform:translateY(27%) rotate(13deg); }
+  #face[data-mood="angry"] .eye.r .lid  { transform:translateY(27%) rotate(-13deg); }
+
+  #face[data-mood="tired"] .eye.l .lid  { transform:translateY(32%) rotate(-14deg); }
+  #face[data-mood="tired"] .eye.r .lid  { transform:translateY(32%) rotate(14deg); }
+
+  #face[data-mood="surprised"] .eye{
+    width:calc(var(--w) * 1.08); height:calc(var(--h) * 1.2); border-radius:50%;
+  }
+
+  /* Idle-only expressions, never reachable from a button. */
+  #face[data-mood="squint"] .eye{ height:calc(var(--h) * .42); }
+  #face[data-mood="sleep"]  .eye{
+    height:calc(var(--h) * .08); border-radius:999px;
+    transition:height .8s ease, border-radius .8s ease;   /* slower: eyes DROOP shut */
+  }
+
+  /* Whole-face animations, on #row so they compose with the glance on #face. */
+  @keyframes laugh   { 0%,100%{transform:translateY(0)}
+                       25%{transform:translateY(-7%)} 50%{transform:translateY(5%)}
+                       75%{transform:translateY(-4%)} }
+  @keyframes confused{ 0%,100%{transform:translateX(0)}
+                       20%{transform:translateX(-6%)} 40%{transform:translateX(6%)}
+                       60%{transform:translateX(-4%)} 80%{transform:translateX(4%)} }
+  #row.laugh   { animation:laugh    .45s ease-in-out 2; }
+  #row.confused{ animation:confused .55s ease-in-out 1; }
+
+  /* The node is gone (tab left open after `make down`, node crashed). Without
+     this the page keeps blinking contentedly and looks perfectly healthy. */
+  #face.offline{ opacity:.22; }
+</style>
+</head>
+<body>
+  <div id="face" data-mood="default">
+    <div id="row">
+      <div class="eye l"><div class="lid"></div></div>
+      <div class="eye r"><div class="lid"></div></div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------------ knobs
+  // Turn the personality up or down here. Everything else is mechanism.
+  const CFG = {
+    travelX: 7, travelY: 4.5,     // vmin the eyes move at a full command
+    parallax: .09,                // how much the LEADING eye grows (0 = flat)
+    gapSquash: 2.4,               // vmin the TRAILING eye slides inward
+    blinkEvery: [2200, 6400],     // ms between blinks, random in this range
+    articEvery: [2600, 6500],     // ms between idle antics
+    pointerHold: 2500,            // ms the eyes keep following the pointer
+    sleepAfter: 90000,            // ms of nothing at all -> the eyes close
+  };
+
+  const face = document.getElementById('face');
+  const row  = document.getElementById('row');
+  const eyes = [...document.querySelectorAll('.eye')];
+  const [eyeL, eyeR] = eyes;
+  const vmin = () => Math.min(innerWidth, innerHeight) / 100;
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = list => list[Math.floor(Math.random() * list.length)];
+  const clamp = v => Math.max(-1, Math.min(1, v));
+
+  // st  -- what the ROBOT is doing, from face_node (or the keyboard preview).
+  // fx  -- what the FACE is doing on its own initiative. Overrides st while it
+  //        lasts. Keeping the two apart is what stops an idle animation from
+  //        being mistaken for a real mood, and stops a real mood from being
+  //        stomped by a daydream.
+  let st = {mood:'default', look:[0,0], moving:false};
+  let fx = {mood:null, look:null};
+  let idle = [0,0];
+  let pointerLook = [0,0], pointerUntil = 0;
+  let asleep = false;
+  let lastActivity = Date.now();
+
+  // Priority: a real command beats the pointer, the pointer beats whatever the
+  // face was daydreaming about.
+  const gaze = () => st.moving ? st.look
+              : (Date.now() < pointerUntil ? pointerLook : (fx.look || idle));
+
+  const render = () => {
+    face.dataset.mood = fx.mood || st.mood;
+    const [x,y] = gaze();
+    face.style.transform =
+      `translate(${x*CFG.travelX*vmin()}px, ${-y*CFG.travelY*vmin()}px)`;
+
+    // PARALLAX -- the reason the two eyes are not just a mirrored pair.
+    // A face turning to one side does not slide two identical rectangles: the
+    // eye on the near side comes toward you and grows, the far one shrinks and
+    // is dragged around the curve of the head, which closes the gap between
+    // them. Two lines of arithmetic, and the pair stops reading as one div
+    // copied twice.
+    const s = CFG.parallax, g = CFG.gapSquash * vmin();
+    eyeL.style.scale = (1 - s*x).toFixed(3);
+    eyeR.style.scale = (1 + s*x).toFixed(3);
+    // Only the TRAILING eye slides; the leading one is already where it wants
+    // to be. max/min pick which is which without a branch.
+    eyeL.style.translate = `${(g * Math.max(0, x)).toFixed(1)}px`;
+    eyeR.style.translate = `${(g * Math.min(0, x)).toFixed(1)}px`;
+  };
+
+  // ------------------------------------------------------------- primitives
+  const canBlink = () => {
+    // Wide eyes do not blink (it kills the effect) and closed ones cannot.
+    const m = face.dataset.mood;
+    return m !== 'surprised' && m !== 'sleep';
+  };
+  const shut = (el, ms) => {
+    el.classList.add('blink');
+    setTimeout(() => el.classList.remove('blink'), ms);
+  };
+  // The two eyes do NOT close on the same frame. A perfectly synchronised
+  // blink is the single most machine-looking thing a pair of eyes can do; a
+  // few tens of milliseconds of offset is all it takes to stop looking copied.
+  const doBlink = () => {
+    if(!canBlink()) return;
+    shut(eyeL, 110);
+    setTimeout(() => shut(eyeR, 110), rand(25, 85));
+  };
+  const wink = () => { if(canBlink()) shut(pick(eyes), 420); };
+
+  // A micro-expression: hold a mood briefly, then hand the face back. The token
+  // guards against two antics overlapping and the first one's timeout clearing
+  // the second one's mood.
+  let fxToken = 0;
+  const micro = (mood, ms) => {
+    const mine = ++fxToken;
+    fx.mood = mood; render();
+    setTimeout(() => { if(fxToken === mine){ fx.mood = null; render(); } }, ms);
+  };
+
+  const shake = kind => {
+    row.classList.remove('laugh', 'confused');
+    void row.offsetWidth;                       // restart the animation
+    row.classList.add(kind);
+    setTimeout(() => row.classList.remove(kind), 1200);
+  };
+
+  const glanceAt = (xy, ms) => {
+    const mine = ++fxToken;
+    fx.look = xy; render();
+    setTimeout(() => { if(fxToken === mine){ fx.look = null; render(); } }, ms);
+  };
+
+  // ------------------------------------------------------------------ antics
+  // What the face does when nobody is driving it and no button is held. Weights
+  // are just repeats in the list -- a lookup table beats a weighted-random
+  // helper for eight entries.
+  const glance = (r=.55) => { idle = [rand(-r,r), rand(-.3,.3)]; render(); };
+  const ANTICS = [
+    () => glance(),                                                 // look somewhere
+    () => glance(),
+    () => glance(.95),                                              // look right over there
+    () => { doBlink(); setTimeout(doBlink, 190); },                 // double blink
+    () => wink(),                                                   // one eye only
+    () => micro('happy', 900),                                      // pleased with itself
+    () => micro('squint', 1200),                                    // curious / suspicious
+    () => micro('tired', 1400),                                     // bored
+    () => micro('surprised', 650),                                  // heard something
+    () => shake('confused'),
+    () => { shake('laugh'); micro('happy', 1100); },
+    // Scan the room: corner to corner, then back. Deliberately wider than a
+    // glance -- the face should USE the page, not vibrate in the middle of it.
+    () => { glanceAt([-.9,.25], 750);
+            setTimeout(() => glanceAt([.9,.25], 750), 800);
+            setTimeout(() => glanceAt([0,0],    450), 1600); },
+  ];
+
+  // Asleep the head droops: the eyes sit low, not politely centred.
+  const sleepNow = () => { asleep = true; fx.look = [0,-.35]; micro('sleep', 1e9); };
+  const wakeUp = () => {
+    if(!asleep) return;
+    asleep = false; fx.mood = null; fx.look = null;
+    micro('surprised', 700);                    // startled awake, like EMO
+  };
+
+  const tick = () => {
+    setTimeout(tick, rand(...CFG.articEvery));
+    // Antics are IDLE behaviour only. A held button or a live command is the
+    // robot actually saying something, and the face must not talk over it.
+    if(st.moving || st.mood !== 'default'){ lastActivity = Date.now(); wakeUp(); return; }
+    if(Date.now() < pointerUntil) return;   // busy watching someone's finger
+    if(asleep) return;
+    if(Date.now() - lastActivity > CFG.sleepAfter){ sleepNow(); return; }
+    pick(ANTICS)();
+  };
+
+  const blinkLoop = () => {
+    setTimeout(blinkLoop, rand(...CFG.blinkEvery));
+    if(!asleep) doBlink();
+  };
+
+  // --------------------------------------------------------------- transport
+  // Manual preview mode: the keyboard has taken over, so a dead /events is
+  // expected and must not keep dimming the page. EventSource retries on its own
+  // in the background, and the first real message hands control back.
+  let manual = false;
+
+  const es = new EventSource('/events');
+  es.onopen    = () => face.classList.remove('offline');
+  es.onerror   = () => { if(!manual) face.classList.add('offline'); };
+  es.onmessage = e => {
+    manual = false;
+    const next = JSON.parse(e.data);
+    if(next.moving || next.mood !== 'default'){ lastActivity = Date.now(); wakeUp(); }
+    st = next;
+    render();
+  };
+
+  // ---------------------------------------------------------------- keyboard
+  // The letters are the controller's own face buttons, so what you press here
+  // is what you will press on the Pro Controller. The rest is for previewing
+  // the idle behaviour without waiting for it to happen on its own.
+  // WATCH THE POINTER. On a laptop this is the mouse; on the touchscreen that
+  // ends up on the robot it is a finger. Costs nothing when neither exists, and
+  // it is the cheapest interaction there is that makes a face feel like it is
+  // in the room with you rather than playing a loop.
+  const watchPointer = e => {
+    if(st.moving) return;                    // driving beats being looked at
+    pointerLook = [clamp((e.clientX / innerWidth  - .5) * 2.2),
+                   clamp(-(e.clientY / innerHeight - .5) * 2.2)];
+    pointerUntil = Date.now() + CFG.pointerHold;
+    lastActivity = Date.now();
+    wakeUp();
+    render();
+  };
+  addEventListener('pointermove', watchPointer);
+  addEventListener('pointerdown', watchPointer);
+
+  // Fullscreen has to be asked for from inside a user gesture -- a browser will
+  // refuse it from a timer or on load, and there is no way around that.
+  const fullscreen = () => {
+    if(document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  };
+  addEventListener('dblclick', fullscreen);
+
+  const KEYS = {'1':'default','2':'happy','3':'angry','4':'tired','5':'surprised',
+                'a':'happy','b':'angry','x':'tired','y':'surprised'};
+  const ARROWS = {ArrowLeft:[-1,0], ArrowRight:[1,0],
+                  ArrowUp:[0,1],    ArrowDown:[0,-1]};   // as cmd_vel would aim them
+  addEventListener('keydown', e => {
+    const k = e.key.toLowerCase(), mood = KEYS[k], look = ARROWS[e.key];
+    // Fullscreen first, and without touching any state: it is a view setting,
+    // not something the face should react to.
+    if(k === 'f'){ e.preventDefault(); fullscreen(); return; }
+    const extra = {'6':() => shake('laugh'), '7':() => shake('confused'),
+                   '8':sleepNow, '9':() => { wakeUp(); pick(ANTICS)(); }, '0':wakeUp,
+                   'w':wink}[k];
+    if(!mood && !look && !extra) return;
+    e.preventDefault();                 // arrows would otherwise scroll the page
+    manual = true;
+    face.classList.remove('offline');
+    if(extra){ lastActivity = Date.now(); extra(); return; }
+    wakeUp(); lastActivity = Date.now();
+    st = {mood: mood || st.mood, look: look || [0,0], moving: !!look};
+    render();
+  });
+  addEventListener('keyup', e => {
+    if(!ARROWS[e.key]) return;
+    st = {...st, moving:false};         // let go -> idle wander takes over again
+    render();
+  });
+
+  render();
+  setTimeout(tick, rand(...CFG.articEvery));
+  blinkLoop();
+})();
+</script>
+</body>
+</html>
